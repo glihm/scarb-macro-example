@@ -169,7 +169,7 @@ pub fn from_module(db: &SimpleParserDatabase, module_ast: &ast::ItemModule) -> P
 
       // 1. Using this approach, doesn't seem that the diags are actually mapped out correctly.
       let token_stream = TokenStream::new(vec![TokenTree::Ident(Token::new(code.to_string(), TextSpan::call_site()))]);
-      // return ProcMacroResult::new(token_stream);
+      return ProcMacroResult::new(token_stream);
 
       // There is also a parse virtual with diagnostics function, to be checked.
       let (syntax_node, diagnostics) = db.parse_virtual_with_diagnostics(code);
