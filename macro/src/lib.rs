@@ -3,8 +3,9 @@ extern crate cairo_lang_parser;
 extern crate cairo_lang_syntax;
 extern crate cairo_lang_utils;
 extern crate cairo_lang_defs;
+extern crate cairo_lang_diagnostics;
 
-use cairo_lang_macro::{attribute_macro, quote, Diagnostic, Diagnostics, ProcMacroResult, TextSpan, Token, TokenStream, TokenTree};
+use cairo_lang_macro::{attribute_macro, quote, Diagnostic, Diagnostics, ProcMacroResult, Severity, TextSpan, Token, TokenStream, TokenTree};
 use cairo_lang_parser::utils::SimpleParserDatabase;
 use cairo_lang_syntax::node::ast::MaybeModuleBody;
 use cairo_lang_syntax::node::helpers::BodyItems;
@@ -12,6 +13,7 @@ use cairo_lang_syntax::node::{Terminal, TypedSyntaxNode};
 use cairo_lang_syntax::node::{ast, with_db::SyntaxNodeWithDb};
 use cairo_lang_syntax::node::kind::SyntaxKind::ItemModule;
 use cairo_lang_defs::patcher::{PatchBuilder, RewriteNode};
+use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
 
 fn debug_expand(loc: &str, code: &str) {
@@ -165,9 +167,24 @@ pub fn from_module(db: &SimpleParserDatabase, module_ast: &ast::ItemModule) -> P
       let (code, _) = builder.build();
       debug_expand(&format!("CONTRACT PATCH: {name}"), &code);
 
+      // 1. Using this approach, doesn't seem that the diags are actually mapped out correctly.
       let token_stream = TokenStream::new(vec![TokenTree::Ident(Token::new(code.to_string(), TextSpan::call_site()))]);
+      // return ProcMacroResult::new(token_stream);
 
-      return ProcMacroResult::new(token_stream);
+      // There is also a parse virtual with diagnostics function, to be checked.
+      let (syntax_node, diagnostics) = db.parse_virtual_with_diagnostics(code);
+      let syntax_node_with_db = SyntaxNodeWithDb::new(&syntax_node, db);
+
+      let tokens = quote! {
+        #syntax_node_with_db
+      };
+
+      let diags = diagnostics.format_with_severity(db, &OrderedHashMap::default());
+
+      return ProcMacroResult::new(tokens).with_diagnostics(Diagnostics::new(diags.into_iter().map(|d| Diagnostic {
+        message: d.message().to_string(),
+        severity: if d.severity() == cairo_lang_diagnostics::Severity::Error { Severity::Error } else { Severity::Warning },
+      }).collect()));
   }
 
   ProcMacroResult::new(TokenStream::empty())
