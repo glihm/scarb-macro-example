@@ -164,14 +164,17 @@ pub fn from_module(db: &SimpleParserDatabase, module_ast: &ast::ItemModule) -> P
           origin: module_ast.as_syntax_node().span_without_trivia(db),
       });
 
+      // Code mappings not used?
       let (code, _) = builder.build();
       debug_expand(&format!("CONTRACT PATCH: {name}"), &code);
 
       // 1. Using this approach, doesn't seem that the diags are actually mapped out correctly.
       let token_stream = TokenStream::new(vec![TokenTree::Ident(Token::new(code.to_string(), TextSpan::call_site()))]);
+      // Comment this to test the second approach.
       return ProcMacroResult::new(token_stream);
 
       // There is also a parse virtual with diagnostics function, to be checked.
+      // Seems we are only one line off (one line below the actual error).
       let (syntax_node, diagnostics) = db.parse_virtual_with_diagnostics(code);
       let syntax_node_with_db = SyntaxNodeWithDb::new(&syntax_node, db);
 
