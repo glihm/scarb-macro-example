@@ -1,11 +1,26 @@
 extern crate cairo_lang_macro;
 extern crate cairo_lang_parser;
 extern crate cairo_lang_syntax;
+extern crate cairo_lang_utils;
+extern crate cairo_lang_defs;
 
-use cairo_lang_macro::{attribute_macro, quote, ProcMacroResult, TokenStream};
+use cairo_lang_macro::{attribute_macro, quote, Diagnostic, Diagnostics, ProcMacroResult, TextSpan, Token, TokenStream, TokenTree};
 use cairo_lang_parser::utils::SimpleParserDatabase;
-use cairo_lang_syntax::node::with_db::SyntaxNodeWithDb;
+use cairo_lang_syntax::node::ast::MaybeModuleBody;
+use cairo_lang_syntax::node::helpers::BodyItems;
+use cairo_lang_syntax::node::{Terminal, TypedSyntaxNode};
+use cairo_lang_syntax::node::{ast, with_db::SyntaxNodeWithDb};
+use cairo_lang_syntax::node::kind::SyntaxKind::ItemModule;
+use cairo_lang_defs::patcher::{PatchBuilder, RewriteNode};
+use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
 
+fn debug_expand(loc: &str, code: &str) {
+  if std::env::var("DOJO_EXPAND").is_ok() {
+      println!("\n// *> EXPAND {} <*\n{}\n\n", loc, code);
+  }
+}
+
+/*
 #[attribute_macro]
 pub fn some(_args: TokenStream, _token_stream: TokenStream) -> ProcMacroResult {
     let db_val = SimpleParserDatabase::default();
@@ -59,4 +74,99 @@ pub fn some(_args: TokenStream, _token_stream: TokenStream) -> ProcMacroResult {
       }
     };
     ProcMacroResult::new(tokens)
+}
+*/
+
+#[attribute_macro]
+pub fn some(_args: TokenStream, token_stream: TokenStream) -> ProcMacroResult {
+  let db = SimpleParserDatabase::default();
+  let (root_node, _diagnostics) = db.parse_virtual_with_diagnostics(token_stream);
+
+  for n in root_node.descendants(&db) {
+    // Process only the first module expected to be the contract.
+    if n.kind(&db) == ItemModule {
+        let module_ast = ast::ItemModule::from_syntax_node(&db, n);
+        return from_module(&db, &module_ast);
+    }
+}
+
+  ProcMacroResult::new(TokenStream::empty())
+}
+
+pub fn from_module(db: &SimpleParserDatabase, module_ast: &ast::ItemModule) -> ProcMacroResult {
+  const CONSTRUCTOR_FN: &str = "constructor";
+  const CONTRACT_PATCH: &str = include_str!("./contract.patch.cairo");
+
+  let name = module_ast.name(db).text(db);
+
+  let mut diagnostics = vec![];
+
+  let mut has_storage = false;
+  let mut has_constructor = false;
+
+  if let MaybeModuleBody::Some(body) = module_ast.body(db) {
+      // TODO: Use `.iter_items_in_cfg(db, metadata.cfg_set)` when possible
+      // to ensure we don't loop on items that are not in the current cfg set.
+      let mut body_nodes: Vec<_> = body
+          .items_vec(db)
+          .iter()
+          .flat_map(|el| {
+              if let ast::ModuleItem::Enum(ref enum_ast) = el {
+                  if enum_ast.name(db).text(db).to_string() == "Event" {
+                      diagnostics.push(Diagnostic::error(
+                        "Event is not supported",
+                      ));
+                  }
+              } else if let ast::ModuleItem::Struct(ref struct_ast) = el {
+                  if struct_ast.name(db).text(db).to_string() == "Storage" {
+                      has_storage = true;
+                  }
+              } else if let ast::ModuleItem::FreeFunction(ref fn_ast) = el {
+                  let fn_decl = fn_ast.declaration(db);
+                  let fn_name = fn_decl.name(db).text(db);
+
+                  if fn_name == CONSTRUCTOR_FN {
+                      has_constructor = true;
+                  }
+              }
+
+              vec![RewriteNode::Copied(el.as_syntax_node())]
+          })
+          .collect();
+
+      if !has_constructor {
+          let node = RewriteNode::Text(
+              "
+                  #[constructor]
+                      fn constructor(ref self: ContractState) {
+                          // expected error here since self.a is not defined.
+                          self.a = 1;
+                      }
+                  "
+              .to_string(),
+          );
+
+          body_nodes.append(&mut vec![node]);
+      }
+
+      let mut builder = PatchBuilder::new(db, module_ast);
+      builder.add_modified(RewriteNode::Mapped {
+          node: Box::new(RewriteNode::interpolate_patched(
+              CONTRACT_PATCH,
+              &UnorderedHashMap::from([
+                  ("name".to_string(), RewriteNode::Text(name.to_string())),
+                  ("body".to_string(), RewriteNode::new_modified(body_nodes)),
+              ]),
+          )),
+          origin: module_ast.as_syntax_node().span_without_trivia(db),
+      });
+
+      let (code, _) = builder.build();
+
+      let token_stream = TokenStream::new(vec![TokenTree::Ident(Token::new(code.to_string(), TextSpan::call_site()))]);
+
+      return ProcMacroResult::new(token_stream);
+  }
+
+  ProcMacroResult::new(TokenStream::empty())
 }

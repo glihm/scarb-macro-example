@@ -7,3 +7,4 @@ edition = "2024_07"
 
 [dependencies]
 dojo_macro = { path = "../macro" }
+starknet = "=2.9.2"
