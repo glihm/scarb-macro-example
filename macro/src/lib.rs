@@ -140,7 +140,8 @@ pub fn from_module(db: &SimpleParserDatabase, module_ast: &ast::ItemModule) -> P
                   #[constructor]
                       fn constructor(ref self: ContractState) {
                           // expected error here since self.a is not defined.
-                          self.a = 1;
+                          // Uncomment to see how error is reported coming from macro.
+                          // self.a = 1;
                       }
                   "
               .to_string(),
@@ -162,6 +163,7 @@ pub fn from_module(db: &SimpleParserDatabase, module_ast: &ast::ItemModule) -> P
       });
 
       let (code, _) = builder.build();
+      debug_expand(&format!("CONTRACT PATCH: {name}"), &code);
 
       let token_stream = TokenStream::new(vec![TokenTree::Ident(Token::new(code.to_string(), TextSpan::call_site()))]);
 

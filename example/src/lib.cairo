@@ -4,6 +4,7 @@ pub mod my_contract {
     struct Storage {}
 
     fn my_func() -> u32 {
+        fghieghei
         42
     }
 }
